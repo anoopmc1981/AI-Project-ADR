@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADR Level Breakout Scanner - Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <h1>📊 ADR Scanner</h1>
+            </div>
+            <div class="navbar-menu">
+                <span class="user-info" id="userInfo">User</span>
+                <button class="btn btn-logout" id="logoutBtn">Logout</button>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="filter-panel">
+                    <h3>Filters</h3>
+                    
+                    <div class="filter-group">
+                        <label for="directionFilter">Direction:</label>
+                        <select id="directionFilter">
+                            <option value="both">Both</option>
+                            <option value="UPPER">Upper Only</option>
+                            <option value="LOWER">Lower Only</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-group">
+                        <label for="minPrice">Min Price (₹):</label>
+                        <input type="number" id="minPrice" placeholder="0" step="5">
+                    </div>
+
+                    <div class="filter-group">
+                        <label for="minVolume">Min Volume Ratio:</label>
+                        <input type="number" id="minVolume" placeholder="1.0" step="0.1" min="0">
+                    </div>
+
+                    <div class="filter-group">
+                        <label for="minADR">Min ADR %:</label>
+                        <input type="number" id="minADR" placeholder="0" step="0.5" min="0">
+                    </div>
+
+                    <div class="filter-group">
+                        <label for="maxADR">Max ADR %:</label>
+                        <input type="number" id="maxADR" placeholder="100" step="0.5">
+                    </div>
+
+                    <button class="btn btn-apply-filters" id="applyFiltersBtn">Apply Filters</button>
+                    <button class="btn btn-reset-filters" id="resetFiltersBtn">Reset</button>
+                </div>
+
+                <!-- AI Assistant -->
+                <div class="ai-assistant-panel">
+                    <h3>AI Assistant</h3>
+                    <div class="chat-box">
+                        <div id="chatMessages" class="chat-messages"></div>
+                    </div>
+                    <div class="chat-input-group">
+                        <input 
+                            type="text" 
+                            id="chatInput" 
+                            placeholder="Ask about crossings..."
+                            class="chat-input"
+                        >
+                        <button class="btn btn-send" id="sendChatBtn">Send</button>
+                    </div>
+                    <p class="disclaimer">
+                        ⓘ AI responses are for information only. Not investment advice.
+                    </p>
+                </div>
+            </aside>
+
+            <!-- Dashboard Content -->
+            <div class="dashboard-content">
+                <!-- Header Section -->
+                <div class="dashboard-header">
+                    <div class="summary-cards">
+                        <div class="summary-card">
+                            <div class="card-label">Upper Crossings</div>
+                            <div class="card-value" id="upperCount">0</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-label">Lower Crossings</div>
+                            <div class="card-value" id="lowerCount">0</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-label">Total</div>
+                            <div class="card-value" id="totalCount">0</div>
+                        </div>
+                        <div class="summary-card">
+                            <div class="card-label">Last Update</div>
+                            <div class="card-value" id="lastUpdate">--:--</div>
+                        </div>
+                    </div>
+
+                    <div class="dashboard-controls">
+                        <button class="btn btn-refresh" id="refreshBtn">🔄 Refresh</button>
+                        <button class="btn btn-export" id="exportBtn">📥 Export CSV</button>
+                        <label class="auto-refresh-toggle">
+                            <input type="checkbox" id="autoRefreshToggle" checked>
+                            <span>Auto Refresh (30s)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Crossings Tables -->
+                <div class="crossings-container">
+                    <!-- Upper Crossings -->
+                    <div class="crossings-section">
+                        <h2>📈 Upper ADR Level Crossings</h2>
+                        <div class="table-wrapper">
+                            <table class="crossings-table" id="upperTable">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>LTP (₹)</th>
+                                        <th>Anchor (₹)</th>
+                                        <th>Level (₹)</th>
+                                        <th>ADR (%)</th>
+                                        <th>% Move</th>
+                                        <th>Vol/Avg</th>
+                                        <th>Time</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="upperBody">
+                                    <tr class="empty-row">
+                                        <td colspan="9">No upper crossings detected today</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Lower Crossings -->
+                    <div class="crossings-section">
+                        <h2>📉 Lower ADR Level Crossings</h2>
+                        <div class="table-wrapper">
+                            <table class="crossings-table" id="lowerTable">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>LTP (₹)</th>
+                                        <th>Anchor (₹)</th>
+                                        <th>Level (₹)</th>
+                                        <th>ADR (%)</th>
+                                        <th>% Move</th>
+                                        <th>Vol/Avg</th>
+                                        <th>Time</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="lowerBody">
+                                    <tr class="empty-row">
+                                        <td colspan="9">No lower crossings detected today</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Market Status -->
+                <div class="market-status">
+                    <p id="marketStatusText">Market Status: Checking...</p>
+                    <p id="dataDelayText">Data Delay: Real-time</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal">
+        <div class="modal-content login-form">
+            <h2>ADR Scanner Login</h2>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="email">Email:</label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="rememberMe">
+                        Remember me
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-primary">Login</button>
+            </form>
+            <p class="disclaimer">
+                ⓘ For information and education only. Not investment advice.
+            </p>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loadingSpinner" class="loading-spinner hidden">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/ai-assistant.js"></script>
+</body>
+</html>
