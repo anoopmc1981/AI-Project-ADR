@@ -1,22 +1,224 @@
-name: Deploy
+name: Deploy ADR Scanner to AWS
+
 on:
   push:
     branches: [main]
+  workflow_dispatch:  # Allow manual trigger
 
 permissions:
-  id-token: write   # required to request the OIDC token
-  contents: read
+  id-token: write     # Required for OIDC token
+  contents: read      # Required for checkout
+  issues: write       # For posting comments on issues
+
+env:
+  AWS_REGION: ap-south-1
+  ENVIRONMENT: dev
+  STACK_NAME: adr-scanner-dev
+  PYTHON_VERSION: '3.11'
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v6
-      - name: Configure AWS Credentials using OIDC
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+      # 1. Checkout source code
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. Setup Python
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      # 3. Configure AWS Credentials via OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
-          aws-region: ap-south-1
-      - name: Test AWS Credentials
-        run: aws sts get-caller-identity
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActionsADRDeployment
+
+      # 4. Verify AWS Connection
+      - name: Verify AWS Credentials
+        run: |
+          echo "🔐 Verifying AWS credentials..."
+          aws sts get-caller-identity
+          aws iam get-user 2>/dev/null || echo "Using role-based access"
+
+      # 5. Install SAM CLI
+      - name: Install AWS SAM CLI
+        run: |
+          echo "📦 Installing SAM CLI..."
+          pip install --upgrade pip
+          pip install aws-sam-cli
+          sam --version
+
+      # 6. Install Python Dependencies
+      - name: Install Backend Dependencies
+        run: |
+          echo "📚 Installing Python dependencies..."
+          pip install -r backend/requirements.txt
+
+      # 7. Validate SAM Template
+      - name: Validate SAM Template
+        run: |
+          echo "✅ Validating SAM template..."
+          sam validate --template template.yaml
+
+      # 8. Build SAM Application
+      - name: Build SAM Application
+        run: |
+          echo "🔨 Building SAM application..."
+          sam build --use-container
+        timeout-minutes: 30
+
+      # 9. Deploy Backend to AWS
+      - name: Deploy Backend with SAM
+        run: |
+          echo "🚀 Deploying backend to AWS..."
+          sam deploy \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --s3-prefix adr-scanner-artifacts \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              Environment=${{ env.ENVIRONMENT }}
+        timeout-minutes: 15
+
+      # 10. Get CloudFormation Outputs
+      - name: Get Deployment Outputs
+        id: cfn-outputs
+        run: |
+          echo "📋 Retrieving CloudFormation outputs..."
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs' \
+            --output table
+
+      # 11. Deploy Frontend to S3
+      - name: Deploy Frontend to S3
+        run: |
+          echo "🌐 Deploying frontend to S3..."
+          
+          # Get S3 bucket name from CloudFormation outputs
+          S3_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
+            --output text)
+          
+          if [ -z "$S3_BUCKET" ]; then
+            echo "❌ S3 bucket not found in CloudFormation outputs"
+            exit 1
+          fi
+          
+          echo "📤 Syncing frontend files to S3: $S3_BUCKET"
+          
+          aws s3 sync frontend/ s3://$S3_BUCKET/ \
+            --delete \
+            --cache-control "max-age=300" \
+            --exclude ".git/*" \
+            --exclude "node_modules/*" \
+            --exclude "*.md"
+          
+          echo "✅ Frontend deployment complete"
+
+      # 12. Invalidate CloudFront Cache
+      - name: Invalidate CloudFront Distribution
+        run: |
+          echo "♻️  Invalidating CloudFront cache..."
+          
+          # Get CloudFront Distribution ID from outputs
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text)
+          
+          if [ ! -z "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
+            echo "Creating invalidation for distribution: $DIST_ID"
+            aws cloudfront create-invalidation \
+              --distribution-id $DIST_ID \
+              --paths "/*"
+            echo "✅ CloudFront invalidation created"
+          else
+            echo "⚠️  CloudFront Distribution ID not found (this may be expected on first deployment)"
+          fi
+
+      # 13. Run Validation Tests
+      - name: Run Tests
+        continue-on-error: true
+        run: |
+          echo "🧪 Running validation tests..."
+          if [ -d "tests" ] && [ -f "tests/test_deployment.py" ]; then
+            pip install pytest pytest-cov
+            pytest tests/ -v --tb=short
+          else
+            echo "ℹ️  No tests found, skipping test step"
+          fi
+
+      # 14. Post Deployment Report
+      - name: Deployment Success Report
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo ""
+          echo "📊 Deployment Summary:"
+          echo "========================"
+          echo "Stack Name: ${{ env.STACK_NAME }}"
+          echo "Region: ${{ env.AWS_REGION }}"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          echo ""
+          
+          # Get CloudFront URL
+          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
+            --output text)
+          
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          
+          echo "🌐 Application URL: $CLOUDFRONT_URL"
+          echo "🔌 API Endpoint: $API_ENDPOINT"
+          echo ""
+          echo "✨ Deployment successful! Access your application at the URL above."
+
+      # 15. Send Failure Notification
+      - name: Notify on Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ **Deployment Failed**\n\nCheck the [workflow logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+            })
+
+      # 16. Create Deployment Summary
+      - name: Create Deployment Summary
+        if: always()
+        run: |
+          echo "## 🚀 ADR Scanner Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "- Stack Name: ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Region: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
