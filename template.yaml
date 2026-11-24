@@ -29,7 +29,7 @@ Resources:
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'adr-scanner-frontend-${AWS::AccountId}-${Environment}'
+      BucketName: !Sub 'adr-frontend-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -41,14 +41,9 @@ Resources:
   OHLCVStorageBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'adr-scanner-ohlcv-${AWS::AccountId}-${Environment}'
+      BucketName: !Sub 'adr-ohlcv-${AWS::AccountId}'
       VersioningConfiguration:
         Status: Enabled
-      LifecycleConfiguration:
-        Rules:
-          - Id: DeleteOldOHLCVData
-            Status: Enabled
-            ExpirationInDays: 730
 
   # ============================================
   # DynamoDB Tables
@@ -56,7 +51,7 @@ Resources:
   ADRLevelsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'adr-scanner-levels-${Environment}'
+      TableName: !Sub 'adr-levels-${Environment}'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: symbol
@@ -72,7 +67,7 @@ Resources:
   CrossingsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'adr-scanner-crossings-${Environment}'
+      TableName: !Sub 'adr-crossings-${Environment}'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: crossing_id
@@ -88,7 +83,7 @@ Resources:
   ScanHistoryTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'adr-scanner-history-${Environment}'
+      TableName: !Sub 'adr-history-${Environment}'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: scan_date
@@ -104,7 +99,7 @@ Resources:
   UserSettingsTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub 'adr-scanner-user-settings-${Environment}'
+      TableName: !Sub 'adr-settings-${Environment}'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: user_id
