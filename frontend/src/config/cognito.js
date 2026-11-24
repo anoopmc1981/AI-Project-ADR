@@ -1,0 +1,5 @@
+export const cognito = {
+  region: process.env.REACT_APP_COGNITO_REGION,
+  userPoolId: process.env.REACT_APP_COGNITO_USER_POOL_ID,
+  clientId: process.env.REACT_APP_COGNITO_CLIENT_ID,
+};
