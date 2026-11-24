@@ -17,7 +17,6 @@ Globals:
     Environment:
       Variables:
         ENVIRONMENT: !Ref Environment
-        DYNAMODB_TABLE_LEVELS: !Ref ADRLevelsTable
         DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
         DYNAMODB_TABLE_HISTORY: !Ref ScanHistoryTable
         S3_BUCKET_OHLCV: !Ref OHLCVStorageBucket
@@ -48,22 +47,6 @@ Resources:
   # ============================================
   # DynamoDB Tables
   # ============================================
-  ADRLevelsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Sub 'adr-levels-${Environment}'
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: symbol
-          AttributeType: S
-        - AttributeName: calculation_date
-          AttributeType: S
-      KeySchema:
-        - AttributeName: symbol
-          KeyType: HASH
-        - AttributeName: calculation_date
-          KeyType: RANGE
-
   CrossingsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -164,8 +147,6 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrossingsTable
-        - DynamoDBReadPolicy:
-            TableName: !Ref ADRLevelsTable
       Events:
         DummyEvent:
           Type: Schedule
@@ -182,8 +163,6 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
-        - DynamoDBReadPolicy:
-            TableName: !Ref ADRLevelsTable
 
   AIAssistantFunction:
     Type: AWS::Serverless::Function
