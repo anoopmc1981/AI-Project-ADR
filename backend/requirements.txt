@@ -8,4 +8,4 @@ numpy==1.24.3
 pandas==2.1.1
 Pillow==10.1.0
 pydantic==2.5.0
-aws-lambda-powertools==2.33.1
+aws-lambda-powertools==1.25.5
