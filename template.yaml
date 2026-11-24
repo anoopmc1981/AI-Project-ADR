@@ -75,8 +75,6 @@ Resources:
           KeyType: HASH
         - AttributeName: calculation_date
           KeyType: RANGE
-      StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
       TTL:
         AttributeName: ttl
         Enabled: true
@@ -189,18 +187,17 @@ Resources:
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
-            S3OriginConfig:
-              OriginAccessIdentity: ''
+            S3OriginConfig: {}
         DefaultCacheBehavior:
-          AllowedMethods: [GET, HEAD, OPTIONS]
+          AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
           Compress: true
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
           ForwardedValues:
             QueryString: false
             Cookies:
               Forward: none
-          TargetOriginId: S3Origin
-          ViewerProtocolPolicy: redirect-to-https
         CustomErrorResponses:
           - ErrorCode: 403
             ResponseCode: 200
@@ -209,7 +206,6 @@ Resources:
             ResponseCode: 200
             ResponsePagePath: /index.html
         DefaultRootObject: index.html
-        ViewerProtocolPolicy: redirect-to-https
 
   # ============================================
   # API Gateway
@@ -268,9 +264,6 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:fyers/*'
-      Environment:
-        Variables:
-          FYERS_API_KEY: !Sub '{{resolve:secretsmanager:fyers-api-key:SecretString:api_key}}'
       Events:
         ScheduledTrigger:
           Type: Schedule
