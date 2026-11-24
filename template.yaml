@@ -193,7 +193,8 @@ Resources:
         ScheduledTrigger:
           Type: Schedule
           Properties:
-            Schedule: 'cron(0 9 ? * MON-FRI *)'
+            Schedule: 'rate(1 hour)'
+            Enabled: false
 
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
@@ -206,6 +207,12 @@ Resources:
             TableName: !Ref CrossingsTable
         - DynamoDBReadPolicy:
             TableName: !Ref ADRLevelsTable
+      Events:
+        DummyEvent:
+          Type: Schedule
+          Properties:
+            Schedule: 'rate(30 minutes)'
+            Enabled: false
 
   DashboardFunction:
     Type: AWS::Serverless::Function
