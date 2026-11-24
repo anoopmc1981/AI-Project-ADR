@@ -241,12 +241,6 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - bedrock:InvokeModel
-              Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
       Events:
         ChatApi:
           Type: Api

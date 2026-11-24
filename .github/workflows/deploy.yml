@@ -90,27 +90,20 @@ jobs:
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --parameter-overrides \
               Environment=${{ env.ENVIRONMENT }} || {
-            echo "❌ Deployment failed. Checking for changesets..."
+            echo "❌ Deployment failed. Getting detailed changeset info..."
             CHANGESETS=$(aws cloudformation list-change-sets \
               --stack-name ${{ env.STACK_NAME }} \
               --region ${{ env.AWS_REGION }} \
               --query 'Summaries[0].ChangeSetId' \
               --output text 2>/dev/null)
             if [ ! -z "$CHANGESETS" ] && [ "$CHANGESETS" != "None" ]; then
-              echo "Getting changeset details: $CHANGESETS"
+              echo "Changeset: $CHANGESETS"
+              echo "Full changeset description:"
               aws cloudformation describe-change-set \
                 --change-set-name "$CHANGESETS" \
                 --stack-name ${{ env.STACK_NAME }} \
-                --region ${{ env.AWS_REGION }} \
-                --query 'StatusReason' \
-                --output text 2>/dev/null || true
+                --region ${{ env.AWS_REGION }} 2>/dev/null | jq '.' || true
             fi
-            echo "Getting stack events..."
-            aws cloudformation describe-stack-events \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region ${{ env.AWS_REGION }} \
-              --query 'StackEvents[0:30]' \
-              --output table 2>/dev/null || echo "Could not retrieve events"
             exit 1
           }
         timeout-minutes: 15
