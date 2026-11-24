@@ -30,12 +30,28 @@ Resources:
     Properties:
       BucketName: !Sub 'adr-frontend-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
       VersioningConfiguration:
         Status: Enabled
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
 
   OHLCVStorageBucket:
     Type: AWS::S3::Bucket
@@ -181,3 +197,9 @@ Outputs:
     Value: !Ref FrontendBucket
     Export:
       Name: !Sub '${AWS::StackName}-FrontendBucket'
+
+  S3WebsiteEndpoint:
+    Description: Frontend S3 Website Endpoint
+    Value: !GetAtt FrontendBucket.WebsiteURL
+    Export:
+      Name: !Sub '${AWS::StackName}-WebsiteURL'
