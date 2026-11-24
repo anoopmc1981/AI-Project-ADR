@@ -142,15 +142,6 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
 
   # ============================================
-  # API Gateway
-  # ============================================
-  ADRScannerApi:
-    Type: AWS::Serverless::Api
-    Properties:
-      StageName: !Ref Environment
-      TracingEnabled: false
-
-  # ============================================
   # Lambda Functions
   # ============================================
   
@@ -163,13 +154,6 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
-      Events:
-        LoginApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ADRScannerApi
-            Path: /auth/login
-            Method: POST
 
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
@@ -200,19 +184,6 @@ Resources:
             TableName: !Ref CrossingsTable
         - DynamoDBReadPolicy:
             TableName: !Ref ADRLevelsTable
-      Events:
-        GetCrossingsApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ADRScannerApi
-            Path: /api/crossings
-            Method: GET
-        GetHistoryApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ADRScannerApi
-            Path: /api/history
-            Method: GET
 
   AIAssistantFunction:
     Type: AWS::Serverless::Function
@@ -223,13 +194,6 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
-      Events:
-        ChatApi:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ADRScannerApi
-            Path: /api/chat
-            Method: POST
 
   # ============================================
   # SNS & SQS for Alerts
@@ -295,12 +259,6 @@ Resources:
             BatchSize: 10
 
 Outputs:
-  ApiEndpoint:
-    Description: API Gateway Endpoint
-    Value: !Sub 'https://${ADRScannerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
-    Export:
-      Name: !Sub '${AWS::StackName}-ApiEndpoint'
-
   CognitoUserPoolId:
     Description: Cognito User Pool ID
     Value: !Ref CognitoUserPool
