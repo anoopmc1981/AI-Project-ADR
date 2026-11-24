@@ -176,26 +176,6 @@ Resources:
             Path: /auth/login
             Method: POST
 
-  ADRCalculationFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub 'adr-scanner-calculation-${Environment}'
-      CodeUri: backend/functions/adr_calculation/
-      Handler: app.lambda_handler
-      Timeout: 300
-      MemorySize: 1024
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ADRLevelsTable
-        - S3CrudPolicy:
-            BucketName: !Ref OHLCVStorageBucket
-      Events:
-        ScheduledTrigger:
-          Type: Schedule
-          Properties:
-            Schedule: 'rate(1 hour)'
-            Enabled: false
-
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
     Properties:
