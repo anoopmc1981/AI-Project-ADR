@@ -91,6 +91,10 @@ Resources:
           AttributeType: S
         - AttributeName: crossing_timestamp
           AttributeType: S
+        - AttributeName: symbol
+          AttributeType: S
+        - AttributeName: crossing_date
+          AttributeType: S
       KeySchema:
         - AttributeName: crossing_id
           KeyType: HASH
@@ -105,7 +109,9 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
-          BillingMode: PAY_PER_REQUEST
+          ProvisionedThroughput:
+            ReadCapacityUnits: 5
+            WriteCapacityUnits: 5
 
   ScanHistoryTable:
     Type: AWS::DynamoDB::Table
@@ -170,16 +176,6 @@ Resources:
         - ADMIN_NO_SRP_AUTH
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-      AllowedOAuthFlows:
-        - code
-      AllowedOAuthScopes:
-        - email
-        - openid
-        - profile
-      CallbackURLs:
-        - !Sub 'https://${CloudFrontDistribution.DomainName}/auth/callback'
-      LogoutURLs:
-        - !Sub 'https://${CloudFrontDistribution.DomainName}/logout'
 
   # ============================================
   # CloudFront Distribution
@@ -189,16 +185,22 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
+        HttpVersion: http2
         Origins:
           - Id: S3Origin
             DomainName: !GetAtt FrontendBucket.RegionalDomainName
-            S3OriginConfig: {}
+            S3OriginConfig:
+              OriginAccessIdentity: ''
         DefaultCacheBehavior:
-          AllowedMethods: [GET, HEAD]
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # Managed-CachingOptimized
-          OriginAccessPolicyId: 2f65aee9-131c-47d6-8301-6a02a3ef7be8
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-        DefaultRootObject: index.html
         CustomErrorResponses:
           - ErrorCode: 403
             ResponseCode: 200
@@ -206,6 +208,7 @@ Resources:
           - ErrorCode: 404
             ResponseCode: 200
             ResponsePagePath: /index.html
+        DefaultRootObject: index.html
         ViewerProtocolPolicy: redirect-to-https
 
   # ============================================
@@ -397,6 +400,14 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
               Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:whatsapp/*'
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueAttributes
+              Resource: !GetAtt AlertQueue.Arn
       Events:
         SQSEvent:
           Type: SQS
