@@ -89,7 +89,15 @@ jobs:
             --no-fail-on-empty-changeset \
             --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
             --parameter-overrides \
-              Environment=${{ env.ENVIRONMENT }}
+              Environment=${{ env.ENVIRONMENT }} || {
+            echo "❌ Deployment failed. Getting CloudFormation events..."
+            aws cloudformation describe-stack-events \
+              --stack-name ${{ env.STACK_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'StackEvents[0:20]' \
+              --output table 2>/dev/null || echo "Could not retrieve events"
+            exit 1
+          }
         timeout-minutes: 15
 
       # 10. Get CloudFormation Outputs
