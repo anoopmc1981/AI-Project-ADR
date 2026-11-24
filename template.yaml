@@ -164,16 +164,6 @@ Resources:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
 
-  AIAssistantFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub 'adr-scanner-ai-${Environment}'
-      CodeUri: backend/functions/ai_assistant/
-      Handler: app.lambda_handler
-      Policies:
-        - DynamoDBReadPolicy:
-            TableName: !Ref CrossingsTable
-
   # ============================================
   # SNS & SQS for Alerts
   # ============================================
