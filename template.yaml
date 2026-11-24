@@ -259,8 +259,12 @@ Resources:
             TableName: !Ref ADRLevelsTable
         - S3CrudPolicy:
             BucketName: !Ref OHLCVStorageBucket
-        - SecretsManagerReadPolicy:
-            SecretArn: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:fyers/*'
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:fyers/*'
       Environment:
         Variables:
           FYERS_API_KEY: !Sub '{{resolve:secretsmanager:fyers-api-key:SecretString:api_key}}'
@@ -387,8 +391,12 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref UserSettingsTable
-        - SecretsManagerReadPolicy:
-            SecretArn: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:whatsapp/*'
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:whatsapp/*'
       Events:
         SQSEvent:
           Type: SQS
