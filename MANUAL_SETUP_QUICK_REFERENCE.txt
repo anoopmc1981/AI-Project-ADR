@@ -1,0 +1,342 @@
+╔════════════════════════════════════════════════════════════════════╗
+║          GitHub OIDC Manual Setup - Quick Reference Card           ║
+╚════════════════════════════════════════════════════════════════════╝
+
+📌 SAVE THIS FILE - You'll reference it during setup!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📝 PART 1: Get Your AWS Account ID
+
+Action:    Log into AWS Console → Click name (top right) → Copy Account ID
+URL:       https://console.aws.amazon.com
+Save as:   ACCOUNT_ID = _____________________________ (12 digits)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔐 PART 2: Create GitHub OIDC Identity Provider
+
+URL:       https://console.aws.amazon.com/iam/
+Navigate:  Left sidebar → "Identity providers"
+Click:     [Add provider] button (orange)
+
+Configure:
+  • Provider type:      OpenID Connect
+  • Provider URL:       https://token.actions.githubusercontent.com
+  • Audience:          sts.amazonaws.com
+  • Get Thumbprint:    Click [Get thumbprint] button
+
+Expected Result:
+  ✅ Provider "token.actions.githubusercontent.com" appears in list
+  ✅ Type: OpenID Connect
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+👤 PART 3: Create IAM Role
+
+URL:       https://console.aws.amazon.com/iam/
+Navigate:  Left sidebar → Roles
+Click:     [Create role] button (orange)
+
+Step 1 - Select Trusted Entity:
+  • Trusted entity type:  Web identity
+  • Identity provider:    token.actions.githubusercontent.com
+  • Audience:            sts.amazonaws.com
+  • Click:               [Next]
+
+Step 2 - Add Permissions:
+  • Search for:         AdministratorAccess
+  • Check:              The checkbox next to it
+  • Click:              [Next]
+
+Step 3 - Name Role:
+  • Role name:          GitHubActionsADRDeployRole (exactly!)
+  • Description:        Role for GitHub Actions to deploy ADR Scanner to AWS
+  • Click:              [Create role]
+
+Expected Result:
+  ✅ Green success message
+  ✅ Role "GitHubActionsADRDeployRole" created
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔑 PART 4: Edit Trust Policy (MOST IMPORTANT!)
+
+URL:       https://console.aws.amazon.com/iam/
+Navigate:  Left sidebar → Roles
+Find:      GitHubActionsADRDeployRole
+Click:     Trust relationships tab
+Click:     [Edit trust policy] button
+
+IMPORTANT: Replace YOUR_ACCOUNT_ID with your Account ID!
+
+Delete:    ALL existing JSON in editor
+
+Replace with:
+─────────────────────────────────────────────────────────────────────
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:anoopmc1981/AI-Project-ADR:*"
+        }
+      }
+    }
+  ]
+}
+─────────────────────────────────────────────────────────────────────
+
+Click:     [Update policy]
+
+Expected Result:
+  ✅ Green success message
+  ✅ Trust policy updated with TWO conditions
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ PART 5: Verify & Get Role ARN
+
+Action:    Still in GitHubActionsADRDeployRole role page
+Verify:    
+  • Permissions tab → Should show "AdministratorAccess" ✅
+  • Trust relationships → Should show TWO conditions ✅
+
+Copy:      ARN field value
+           arn:aws:iam::YOUR_ACCOUNT_ID:role/GitHubActionsADRDeployRole
+
+Save as:   ROLE_ARN = _________________________________________________
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔗 PART 6: Add GitHub Secret
+
+URL:       https://github.com/anoopmc1981/AI-Project-ADR/settings/secrets/actions
+Navigate:  Settings → Secrets and variables → Actions
+
+If AWS_IAM_ROLE secret doesn't exist:
+  Click:   [New repository secret]
+  Name:    AWS_IAM_ROLE
+  Value:   (paste your ROLE_ARN from above)
+  Click:   [Add secret]
+
+If AWS_IAM_ROLE secret exists:
+  Click:   On AWS_IAM_ROLE
+  Click:   [Edit secret]
+  Replace: Value with your ROLE_ARN
+  Click:   [Update secret]
+
+Expected Result:
+  ✅ Green success message
+  ✅ Secret "AWS_IAM_ROLE" appears in list
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 PART 7: Verify Workflow File
+
+URL:       https://github.com/anoopmc1981/AI-Project-ADR/blob/main/.github/workflows/deploy.yml
+
+Look for:
+  ✅ permissions:
+       id-token: write           (THIS IS CRITICAL)
+       contents: read
+       issues: write
+
+  ✅ Configure AWS Credentials step:
+       uses: aws-actions/configure-aws-credentials@v4
+       role-to-assume: ${{ secrets.AWS_IAM_ROLE }}
+       aws-region: ap-south-1
+
+Expected Result:
+  ✅ All these lines exist and are correct
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🧪 PART 8: Test Configuration
+
+URL:       https://github.com/anoopmc1981/AI-Project-ADR/actions
+Find:      Last failed workflow (red ❌)
+Click:     The workflow name to open it
+Click:     [Re-run jobs] button (top right)
+Choose:    [Re-run all jobs]
+
+Watch:     The "Configure AWS Credentials" step
+
+Expected Success Logs:
+  ✅ Getting AWS Credentials for GitHub Actions
+  ✅ Calling IAM GetCallerIdentity
+  ✅ STS assumed role successfully
+  ✅ No error messages
+
+Expected Errors (If configuration is wrong):
+  ❌ Not authorized to perform sts:AssumeRoleWithWebIdentity
+  ❌ Credentials could not be loaded
+  ❌ Role does not exist
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ FINAL VERIFICATION CHECKLIST
+
+AWS Console - Identity Provider:
+  ☐ Provider name: token.actions.githubusercontent.com
+  ☐ Type: OpenID Connect
+  ☐ Audience: sts.amazonaws.com
+  ☐ Thumbprint: Populated
+
+AWS Console - IAM Role:
+  ☐ Role name: GitHubActionsADRDeployRole
+  ☐ Trust policy has StringEquals condition (aud)
+  ☐ Trust policy has StringLike condition (sub)
+  ☐ Trust policy includes: repo:anoopmc1981/AI-Project-ADR:*
+  ☐ Permission: AdministratorAccess attached
+
+GitHub Repository:
+  ☐ Secret AWS_IAM_ROLE exists
+  ☐ Secret value is correct Role ARN
+  ☐ No extra spaces in secret value
+  ☐ Workflow has: permissions: id-token: write
+  ☐ Workflow uses: aws-actions/configure-aws-credentials@v4
+  ☐ Workflow references: ${{ secrets.AWS_IAM_ROLE }}
+
+GitHub Actions Test:
+  ☐ Workflow re-run triggered
+  ☐ Configure AWS Credentials step passed ✅
+  ☐ Logs show "STS assumed role successfully"
+  ☐ No authentication errors
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 EXACT VALUES TO USE (Copy/Paste These)
+
+Provider URL (copy exactly):
+  https://token.actions.githubusercontent.com
+
+Audience (copy exactly):
+  sts.amazonaws.com
+
+Role Name (copy exactly):
+  GitHubActionsADRDeployRole
+
+GitHub Secret Name (copy exactly):
+  AWS_IAM_ROLE
+
+GitHub Repository (copy exactly):
+  anoopmc1981/AI-Project-ADR
+
+Repository Condition (copy exactly):
+  repo:anoopmc1981/AI-Project-ADR:*
+
+AWS Region (copy exactly):
+  ap-south-1
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⏱️ TIME BREAKDOWN
+
+Part 1: Get Account ID ............... 1 min
+Part 2: Create OIDC Provider ......... 2 min
+Part 3: Create IAM Role ............. 3 min
+Part 4: Edit Trust Policy ........... 3 min (TAKE YOUR TIME HERE!)
+Part 5: Verify & Get ARN ............ 2 min
+Part 6: Add GitHub Secret ........... 2 min
+Part 7: Verify Workflow ............. 2 min
+Part 8: Test Configuration .......... 3 min
+─────────────────────────────────────────
+TOTAL ............................... ~18 minutes
+
+Then Deployment ..................... 30-40 minutes (automatic)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚨 COMMON MISTAKES
+
+❌ Account ID Typo
+   → Always use 12 digits from AWS Console top-right
+   → Don't guess or make up numbers
+
+❌ Trust Policy Not Fully Updated
+   → Must have TWO Condition blocks (Audience + Repository)
+   → Not just one condition
+   → Copy/paste exact JSON from guide
+
+❌ GitHub Secret Has Extra Spaces
+   → No spaces before "arn:"
+   → No spaces after the role name
+   → Exact match to Role ARN
+
+❌ Missing "id-token: write" in Workflow
+   → This is REQUIRED for OIDC
+   → Without it, no token is generated
+   → GitHub Actions will fail
+
+❌ Wrong Repository Name
+   → Must be: anoopmc1981/AI-Project-ADR
+   → Not: AI-Project-ADR
+   → Not: anoopmc1981/adr-scanner
+   → Exactly as shown
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📞 QUICK TROUBLESHOOTING
+
+Error: "Not authorized to perform sts:AssumeRoleWithWebIdentity"
+  FIX: Trust policy is wrong. Re-read Part 4 carefully.
+       Make sure you have TWO conditions.
+
+Error: "Credentials could not be loaded"
+  FIX: GitHub secret wrong or not updated. 
+       Verify AWS_IAM_ROLE secret has correct Role ARN.
+       Wait 1 minute and re-run workflow.
+
+Error: "Role does not exist"
+  FIX: Role name is spelled wrong or not created.
+       Go to AWS IAM Roles, search for exact name.
+       Create it again if missing.
+
+Workflow doesn't generate OIDC token
+  FIX: Missing "id-token: write" in workflow permissions.
+       Add it to .github/workflows/deploy.yml
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 SUCCESS INDICATORS
+
+After completing all 8 parts, you should have:
+
+✅ AWS Account ID: 12-digit number saved
+✅ OIDC Identity Provider: "token.actions.githubusercontent.com" in AWS
+✅ IAM Role: "GitHubActionsADRDeployRole" in AWS
+✅ Trust Policy: Contains GitHub repository condition
+✅ Permissions: AdministratorAccess attached to role
+✅ GitHub Secret: "AWS_IAM_ROLE" with correct Role ARN
+✅ Workflow File: Has all required permissions and configurations
+✅ Test Run: "Configure AWS Credentials" step passes ✅
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 SUPPORTING DOCUMENTS
+
+Main guide:        MANUAL_OIDC_SETUP_GUIDE.md
+Checklist:         OIDC_MANUAL_CHECKLIST.md
+Screenshots:       MANUAL_SETUP_SCREENSHOTS_GUIDE.md
+Navigation:        MANUAL_SETUP_INDEX.md
+Troubleshooting:   TROUBLESHOOTING.md
+Next steps:        NEXT_STEPS.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 YOU'RE READY TO START!
+
+Next Step: Open MANUAL_OIDC_SETUP_GUIDE.md and follow Part 1
+
+Good luck! 🎉
+
