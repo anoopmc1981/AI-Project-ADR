@@ -8,10 +8,6 @@ Parameters:
     Type: String
     Default: dev
     AllowedValues: [dev, staging, prod]
-  CognitoDomain:
-    Type: String
-    Description: Cognito User Pool Domain name
-    Default: adr-scanner-dev
 
 Globals:
   Function:
@@ -25,9 +21,6 @@ Globals:
         DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
         DYNAMODB_TABLE_HISTORY: !Ref ScanHistoryTable
         S3_BUCKET_OHLCV: !Ref OHLCVStorageBucket
-        COGNITO_USER_POOL_ID: !Ref CognitoUserPool
-        COGNITO_CLIENT_ID: !Ref CognitoUserPoolClient
-        BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
 
 Resources:
   # ============================================
@@ -75,9 +68,6 @@ Resources:
           KeyType: HASH
         - AttributeName: calculation_date
           KeyType: RANGE
-      TTL:
-        AttributeName: ttl
-        Enabled: true
 
   CrossingsTable:
     Type: AWS::DynamoDB::Table
@@ -89,27 +79,11 @@ Resources:
           AttributeType: S
         - AttributeName: crossing_timestamp
           AttributeType: S
-        - AttributeName: symbol
-          AttributeType: S
-        - AttributeName: crossing_date
-          AttributeType: S
       KeySchema:
         - AttributeName: crossing_id
           KeyType: HASH
         - AttributeName: crossing_timestamp
           KeyType: RANGE
-      GlobalSecondaryIndexes:
-        - IndexName: SymbolDateIndex
-          KeySchema:
-            - AttributeName: symbol
-              KeyType: HASH
-            - AttributeName: crossing_date
-              KeyType: RANGE
-          Projection:
-            ProjectionType: ALL
-          ProvisionedThroughput:
-            ReadCapacityUnits: 5
-            WriteCapacityUnits: 5
 
   ScanHistoryTable:
     Type: AWS::DynamoDB::Table
@@ -126,9 +100,6 @@ Resources:
           KeyType: HASH
         - AttributeName: scan_timestamp
           KeyType: RANGE
-      TTL:
-        AttributeName: ttl
-        Enabled: true
 
   UserSettingsTable:
     Type: AWS::DynamoDB::Table
@@ -176,57 +147,18 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
 
   # ============================================
-  # CloudFront Distribution
-  # ============================================
-  CloudFrontDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        HttpVersion: http2
-        Origins:
-          - Id: S3Origin
-            DomainName: !GetAtt FrontendBucket.RegionalDomainName
-            S3OriginConfig: {}
-        DefaultCacheBehavior:
-          AllowedMethods: [GET, HEAD]
-          CachedMethods: [GET, HEAD]
-          Compress: true
-          TargetOriginId: S3Origin
-          ViewerProtocolPolicy: redirect-to-https
-          ForwardedValues:
-            QueryString: false
-            Cookies:
-              Forward: none
-        CustomErrorResponses:
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-        DefaultRootObject: index.html
-
-  # ============================================
   # API Gateway
   # ============================================
   ADRScannerApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
-      TracingEnabled: true
-      MethodSettings:
-        - ResourcePath: '/**'
-          HttpMethod: '*'
-          LoggingLevel: INFO
-          DataTraceEnabled: true
-          MetricsEnabled: true
+      TracingEnabled: false
 
   # ============================================
   # Lambda Functions
   # ============================================
   
-  # Authentication Function
   LoginFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -244,7 +176,6 @@ Resources:
             Path: /auth/login
             Method: POST
 
-  # ADR Calculation Function
   ADRCalculationFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -258,19 +189,12 @@ Resources:
             TableName: !Ref ADRLevelsTable
         - S3CrudPolicy:
             BucketName: !Ref OHLCVStorageBucket
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:fyers/*'
       Events:
         ScheduledTrigger:
           Type: Schedule
           Properties:
-            Schedule: 'cron(0 9 ? * MON-FRI *)'  # 9 AM IST equivalent in UTC
+            Schedule: 'cron(0 9 ? * MON-FRI *)'
 
-  # Crossing Detection Function
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -282,13 +206,7 @@ Resources:
             TableName: !Ref CrossingsTable
         - DynamoDBReadPolicy:
             TableName: !Ref ADRLevelsTable
-        - SNSPublishMessagePolicy:
-            TopicName: !GetAtt AlertTopic.TopicName
-      Environment:
-        Variables:
-          SNS_TOPIC_ARN: !Ref AlertTopic
 
-  # Dashboard API Function
   DashboardFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -314,7 +232,6 @@ Resources:
             Path: /api/history
             Method: GET
 
-  # AI Assistant Function
   AIAssistantFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -377,7 +294,6 @@ Resources:
       TopicArn: !Ref AlertTopic
       Endpoint: !GetAtt AlertQueue.Arn
 
-  # WhatsApp Alert Function
   WhatsAppAlertFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -387,12 +303,6 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref UserSettingsTable
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:whatsapp/*'
         - Version: '2012-10-17'
           Statement:
             - Effect: Allow
@@ -408,29 +318,7 @@ Resources:
             Queue: !GetAtt AlertQueue.Arn
             BatchSize: 10
 
-  # ============================================
-  # IAM Roles & Policies
-  # ============================================
-  LambdaExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-
 Outputs:
-  CloudFrontURL:
-    Description: CloudFront Distribution URL
-    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
-    Export:
-      Name: !Sub '${AWS::StackName}-CloudFrontURL'
-
   ApiEndpoint:
     Description: API Gateway Endpoint
     Value: !Sub 'https://${ADRScannerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
