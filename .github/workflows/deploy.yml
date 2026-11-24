@@ -83,6 +83,7 @@ jobs:
           sam deploy \
             --stack-name ${{ env.STACK_NAME }} \
             --region ${{ env.AWS_REGION }} \
+            --resolve-s3 \
             --s3-prefix adr-scanner-artifacts \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
