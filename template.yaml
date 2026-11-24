@@ -124,6 +124,47 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
 
   # ============================================
+  # API Gateway
+  # ============================================
+  ADRScannerApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      TracingEnabled: false
+
+  # ============================================
+  # CloudFront Distribution
+  # ============================================
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        DefaultRootObject: index.html
+
+  # ============================================
   # Lambda Functions
   # ============================================
   
@@ -136,6 +177,13 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
+      Events:
+        LoginApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ADRScannerApi
+            Path: /auth/login
+            Method: POST
 
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
@@ -162,8 +210,33 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
+      Events:
+        GetCrossingsApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ADRScannerApi
+            Path: /api/crossings
+            Method: GET
+        GetHistoryApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ADRScannerApi
+            Path: /api/history
+            Method: GET
 
 Outputs:
+  CloudFrontURL:
+    Description: CloudFront Distribution URL
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontURL'
+
+  ApiEndpoint:
+    Description: API Gateway Endpoint
+    Value: !Sub 'https://${ADRScannerApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
   CognitoUserPoolId:
     Description: Cognito User Pool ID
     Value: !Ref CognitoUserPool
