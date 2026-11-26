@@ -9,18 +9,6 @@ Parameters:
     Default: dev
     AllowedValues: [dev, staging, prod]
 
-Globals:
-  Function:
-    Timeout: 60
-    MemorySize: 512
-    Runtime: python3.11
-    Environment:
-      Variables:
-        ENVIRONMENT: !Ref Environment
-        DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
-        DYNAMODB_TABLE_HISTORY: !Ref ScanHistoryTable
-        S3_BUCKET_OHLCV: !Ref OHLCVStorageBucket
-
 Resources:
   # ============================================
   # S3 Buckets
@@ -121,17 +109,12 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
           RequireSymbols: false
-      AutoVerifiedAttributes:
-        - email
-      UsernameAttributes:
-        - email
 
   CognitoUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       ClientName: adr-scanner-client
       UserPoolId: !Ref CognitoUserPool
-      GenerateSecret: false
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
@@ -146,9 +129,16 @@ Resources:
       FunctionName: !Sub 'adr-scanner-login-${Environment}'
       CodeUri: backend/functions/auth/
       Handler: app.lambda_handler
+      Runtime: python3.11
+      Timeout: 60
+      MemorySize: 512
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DYNAMODB_TABLE_SETTINGS: !Ref UserSettingsTable
 
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
@@ -156,9 +146,16 @@ Resources:
       FunctionName: !Sub 'adr-scanner-crossing-${Environment}'
       CodeUri: backend/functions/crossing_detection/
       Handler: app.lambda_handler
+      Runtime: python3.11
+      Timeout: 60
+      MemorySize: 512
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrossingsTable
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
 
   DashboardFunction:
     Type: AWS::Serverless::Function
@@ -166,31 +163,30 @@ Resources:
       FunctionName: !Sub 'adr-scanner-dashboard-${Environment}'
       CodeUri: backend/functions/dashboard/
       Handler: app.lambda_handler
+      Runtime: python3.11
+      Timeout: 60
+      MemorySize: 512
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
 
 Outputs:
   CognitoUserPoolId:
     Description: Cognito User Pool ID
     Value: !Ref CognitoUserPool
-    Export:
-      Name: !Sub '${AWS::StackName}-CognitoUserPoolId'
 
   CognitoClientId:
     Description: Cognito Client ID
     Value: !Ref CognitoUserPoolClient
-    Export:
-      Name: !Sub '${AWS::StackName}-CognitoClientId'
 
   S3BucketName:
     Description: Frontend S3 Bucket
     Value: !Ref FrontendBucket
-    Export:
-      Name: !Sub '${AWS::StackName}-FrontendBucket'
 
   S3WebsiteEndpoint:
     Description: Frontend S3 Website Endpoint
     Value: !GetAtt FrontendBucket.WebsiteURL
-    Export:
-      Name: !Sub '${AWS::StackName}-WebsiteURL'
