@@ -19,9 +19,12 @@ export function Login({ onLoginSuccess }) {
 
     try {
       const result = await authService.login(email, password);
-      onLoginSuccess(result);
+      if (result) {
+        onLoginSuccess(result);
+      }
     } catch (err) {
-      setError(err.message || 'Login failed');
+      console.error('Login error:', err);
+      setError(err.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
     }
