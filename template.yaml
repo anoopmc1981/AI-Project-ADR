@@ -122,11 +122,11 @@ Resources:
           RequireNumbers: true
           RequireSymbols: false
       Schema:
-        - Name: email
+        - Attribute: email
           AttributeDataType: String
           Required: true
           Mutable: false
-        - Name: name
+        - Attribute: name
           AttributeDataType: String
           Mutable: true
 
@@ -135,6 +135,7 @@ Resources:
     Properties:
       ClientName: adr-scanner-client
       UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
       ExplicitAuthFlows:
         - ALLOW_USER_PASSWORD_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
