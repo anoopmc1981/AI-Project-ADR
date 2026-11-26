@@ -81,15 +81,6 @@ jobs:
         run: |
           echo "🚀 Deploying backend to AWS..."
           
-          # Check if stack exists and delete it to avoid changeset issues
-          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} &>/dev/null; then
-            echo "Stack exists, deleting old stack to start fresh..."
-            aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
-            echo "Waiting for stack deletion..."
-            aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null || true
-            sleep 10
-          fi
-          
           sam deploy \
             --stack-name ${{ env.STACK_NAME }} \
             --region ${{ env.AWS_REGION }} \
