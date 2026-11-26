@@ -121,14 +121,10 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
           RequireSymbols: false
-      Schema:
-        - Attribute: email
-          AttributeDataType: String
-          Required: true
-          Mutable: false
-        - Attribute: name
-          AttributeDataType: String
-          Mutable: true
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
 
   CognitoUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -163,12 +159,6 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrossingsTable
-      Events:
-        DummyEvent:
-          Type: Schedule
-          Properties:
-            Schedule: 'rate(30 minutes)'
-            Enabled: false
 
   DashboardFunction:
     Type: AWS::Serverless::Function
