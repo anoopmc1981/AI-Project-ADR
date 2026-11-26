@@ -9,6 +9,18 @@ Parameters:
     Default: dev
     AllowedValues: [dev, staging, prod]
 
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 512
+    Runtime: python3.11
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
+        DYNAMODB_TABLE_HISTORY: !Ref ScanHistoryTable
+        S3_BUCKET_OHLCV: !Ref OHLCVStorageBucket
+
 Resources:
   # ============================================
   # S3 Buckets
@@ -18,28 +30,12 @@ Resources:
     Properties:
       BucketName: !Sub 'adr-frontend-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
-
-  FrontendBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref FrontendBucket
-      PolicyText:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: PublicReadGetObject
-            Effect: Allow
-            Principal: '*'
-            Action: s3:GetObject
-            Resource: !Sub '${FrontendBucket.Arn}/*'
 
   OHLCVStorageBucket:
     Type: AWS::S3::Bucket
@@ -109,6 +105,14 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
           RequireSymbols: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: false
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
 
   CognitoUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
@@ -129,16 +133,9 @@ Resources:
       FunctionName: !Sub 'adr-scanner-login-${Environment}'
       CodeUri: backend/functions/auth/
       Handler: app.lambda_handler
-      Runtime: python3.11
-      Timeout: 60
-      MemorySize: 512
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref UserSettingsTable
-      Environment:
-        Variables:
-          ENVIRONMENT: !Ref Environment
-          DYNAMODB_TABLE_SETTINGS: !Ref UserSettingsTable
 
   CrossingDetectionFunction:
     Type: AWS::Serverless::Function
@@ -146,16 +143,15 @@ Resources:
       FunctionName: !Sub 'adr-scanner-crossing-${Environment}'
       CodeUri: backend/functions/crossing_detection/
       Handler: app.lambda_handler
-      Runtime: python3.11
-      Timeout: 60
-      MemorySize: 512
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref CrossingsTable
-      Environment:
-        Variables:
-          ENVIRONMENT: !Ref Environment
-          DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
+      Events:
+        DummyEvent:
+          Type: Schedule
+          Properties:
+            Schedule: 'rate(30 minutes)'
+            Enabled: false
 
   DashboardFunction:
     Type: AWS::Serverless::Function
@@ -163,30 +159,25 @@ Resources:
       FunctionName: !Sub 'adr-scanner-dashboard-${Environment}'
       CodeUri: backend/functions/dashboard/
       Handler: app.lambda_handler
-      Runtime: python3.11
-      Timeout: 60
-      MemorySize: 512
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
-      Environment:
-        Variables:
-          ENVIRONMENT: !Ref Environment
-          DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTable
 
 Outputs:
   CognitoUserPoolId:
     Description: Cognito User Pool ID
     Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoUserPoolId'
 
   CognitoClientId:
     Description: Cognito Client ID
     Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-CognitoClientId'
 
   S3BucketName:
     Description: Frontend S3 Bucket
     Value: !Ref FrontendBucket
-
-  S3WebsiteEndpoint:
-    Description: Frontend S3 Website Endpoint
-    Value: !GetAtt FrontendBucket.WebsiteURL
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucket'
