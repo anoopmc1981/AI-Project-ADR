@@ -126,16 +126,20 @@ jobs:
             --s3-key lambda-code/adr_lambda.zip \
             --region ${{ env.AWS_REGION }}
           
+          # Wait longer for update to complete
+          echo "Waiting for update to complete..."
+          sleep 30
+          
           # Update handler to point to index.py
           aws lambda update-function-configuration \
             --function-name adr-calculation-dev \
             --handler index.lambda_handler \
             --region ${{ env.AWS_REGION }}
           
-          # Wait for update
+          # Wait for configuration update
           sleep 10
           
-          echo "✅ ADR Lambda updated"
+          echo "✅ ADR Lambda updated successfully"
 
       # 10. Update Dashboard Lambda Function Code
       - name: Package and Update Dashboard Lambda
@@ -160,13 +164,18 @@ jobs:
           
           aws s3 cp dashboard_lambda.zip s3://${BUCKET_NAME}/lambda-code/dashboard_lambda.zip --region ${{ env.AWS_REGION }}
           
-          # Update Lambda
+          # Update Lambda code
           aws lambda update-function-code \
             --function-name adr-scanner-dashboard-dev-v2 \
             --s3-bucket ${BUCKET_NAME} \
             --s3-key lambda-code/dashboard_lambda.zip \
             --region ${{ env.AWS_REGION }}
           
+          # Wait longer for update
+          echo "Waiting for update to complete..."
+          sleep 30
+          
+          # Update handler
           aws lambda update-function-configuration \
             --function-name adr-scanner-dashboard-dev-v2 \
             --handler index.lambda_handler \
