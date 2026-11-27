@@ -63,18 +63,9 @@ jobs:
           echo "📚 Installing Python dependencies..."
           pip install -r backend/requirements.txt
 
-      # 7. Deploy S3 Bucket Stack
-      - name: Deploy S3 Bucket
-        run: |
-          echo "📦 Deploying S3 frontend bucket..."
-          aws cloudformation deploy \
-            --template-file template-s3.yaml \
-            --stack-name adr-frontend-stack \
-            --region ${{ env.AWS_REGION }} \
-            --no-fail-on-empty-changeset
-
-      # 8. Deploy API Gateway Stack
+      # 7. Deploy API Gateway Stack (if not exists)
       - name: Deploy API Gateway
+        continue-on-error: true
         run: |
           echo "🔌 Deploying API Gateway..."
           aws cloudformation deploy \
@@ -84,97 +75,146 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      # 9. Package ADR Lambda with Dependencies
-      - name: Package ADR Lambda
+      # 8. Package ADR Lambda with Dependencies using Python
+      - name: Package ADR Lambda Function
         run: |
           echo "📦 Packaging ADR Lambda with dependencies..."
           
-          # Create deployment directory
-          mkdir -p adr_lambda_package/python
+          # Create temp directory
+          rm -rf lambda_package adr_lambda.zip
+          mkdir -p lambda_package
           
-          # Install dependencies
-          pip install -r backend/requirements.txt -t adr_lambda_package/python/ --quiet
+          # Install dependencies to package directory
+          pip install -q -r backend/requirements.txt -t lambda_package/
           
-          # Copy Lambda function
-          cp backend/functions/adr_calculation/app.py adr_lambda_package/
+          # Copy Lambda function - rename to index.py for handler compatibility
+          cp backend/functions/adr_calculation/app.py lambda_package/index.py
           
-          # Create ZIP
-          cd adr_lambda_package
-          python -m zipfile -c adr_lambda.zip app.py python/
+          # List contents for debugging
+          ls -la lambda_package/ | head -10
+          
+          # Create ZIP archive
+          cd lambda_package
+          zip -q -r ../adr_lambda.zip .
           cd ..
           
+          # Verify ZIP contents
+          echo "ZIP file contents:"
+          unzip -l adr_lambda.zip | head -20
+          
           # Upload to S3
-          aws s3 cp adr_lambda_package/adr_lambda.zip s3://adr-ohlcv-${{ env.AWS_ACCOUNT_ID }}/lambda-code/adr_lambda.zip --region ${{ env.AWS_REGION }}
-
-      # 10. Update ADR Lambda Function
-      - name: Deploy ADR Lambda Function
-        run: |
-          echo "🚀 Deploying ADR Lambda function..."
-          
-          # Get account ID
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="adr-ohlcv-${ACCOUNT_ID}"
           
-          # Update function code
+          echo "Uploading to S3: $BUCKET_NAME"
+          aws s3 cp adr_lambda.zip s3://${BUCKET_NAME}/lambda-code/adr_lambda.zip --region ${{ env.AWS_REGION }}
+          
+          echo "✅ ADR Lambda packaged successfully"
+
+      # 9. Update ADR Lambda Function Code
+      - name: Update ADR Lambda Function
+        run: |
+          echo "🚀 Updating ADR Lambda function..."
+          
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="adr-ohlcv-${ACCOUNT_ID}"
+          
+          # Update function code from S3
           aws lambda update-function-code \
             --function-name adr-calculation-dev \
-            --s3-bucket adr-ohlcv-$ACCOUNT_ID \
+            --s3-bucket ${BUCKET_NAME} \
             --s3-key lambda-code/adr_lambda.zip \
             --region ${{ env.AWS_REGION }}
           
-          # Wait for update to complete
-          sleep 5
+          # Update handler to point to index.py
+          aws lambda update-function-configuration \
+            --function-name adr-calculation-dev \
+            --handler index.lambda_handler \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for update
+          sleep 10
           
           echo "✅ ADR Lambda updated"
 
-      # 11. Deploy Dashboard Lambda
-      - name: Deploy Dashboard Lambda
+      # 10. Update Dashboard Lambda Function Code
+      - name: Package and Update Dashboard Lambda
         run: |
-          echo "🚀 Deploying Dashboard Lambda function..."
+          echo "🚀 Packaging Dashboard Lambda..."
           
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          # Create temp package
+          rm -rf dashboard_package dashboard_lambda.zip
+          mkdir -p dashboard_package
           
-          # Package dashboard function
-          zip -j dashboard_lambda.zip backend/functions/dashboard/app.py
+          # Copy dashboard function
+          cp backend/functions/dashboard/app.py dashboard_package/index.py
+          
+          # Create ZIP
+          cd dashboard_package
+          zip -q -r ../dashboard_lambda.zip .
+          cd ..
           
           # Upload to S3
-          aws s3 cp dashboard_lambda.zip s3://adr-ohlcv-$ACCOUNT_ID/lambda-code/dashboard_lambda.zip --region ${{ env.AWS_REGION }}
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="adr-ohlcv-${ACCOUNT_ID}"
           
-          # Update function code
+          aws s3 cp dashboard_lambda.zip s3://${BUCKET_NAME}/lambda-code/dashboard_lambda.zip --region ${{ env.AWS_REGION }}
+          
+          # Update Lambda
           aws lambda update-function-code \
             --function-name adr-scanner-dashboard-dev-v2 \
-            --s3-bucket adr-ohlcv-$ACCOUNT_ID \
+            --s3-bucket ${BUCKET_NAME} \
             --s3-key lambda-code/dashboard_lambda.zip \
             --region ${{ env.AWS_REGION }}
           
-          sleep 5
+          aws lambda update-function-configuration \
+            --function-name adr-scanner-dashboard-dev-v2 \
+            --handler index.lambda_handler \
+            --region ${{ env.AWS_REGION }}
+          
+          sleep 10
           echo "✅ Dashboard Lambda updated"
 
-      # 12. Build Frontend
-      - name: Build Frontend
+      # 11. Build Frontend
+      - name: Build React Frontend
         run: |
           echo "🔨 Building React frontend..."
           cd frontend
-          npm install
+          npm install --legacy-peer-deps
           npm run build
-          cd ..
+          echo "✅ Frontend build complete"
 
-      # 13. Deploy Frontend to S3
+      # 12. Deploy Frontend to S3
       - name: Deploy Frontend to S3
         run: |
           echo "🌐 Deploying frontend to S3..."
           
-          # Get S3 bucket name
-          S3_BUCKET=$(aws s3 ls | grep adr-frontend | awk '{print $3}')
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="adr-frontend-${ACCOUNT_ID}"
           
-          if [ -z "$S3_BUCKET" ]; then
-            echo "Using default bucket"
-            S3_BUCKET="adr-frontend-$(aws sts get-caller-identity --query Account --output text)"
+          # Check if bucket exists
+          if ! aws s3 ls "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }} 2>&1 | grep -q 'NoSuchBucket'; then
+            echo "Bucket exists: $BUCKET_NAME"
+          else
+            echo "Creating bucket: $BUCKET_NAME"
+            aws s3 mb "s3://${BUCKET_NAME}" --region ${{ env.AWS_REGION }}
+            
+            # Enable website hosting
+            aws s3 website "s3://${BUCKET_NAME}" --index-document index.html --error-document index.html --region ${{ env.AWS_REGION }}
+            
+            # Add bucket policy for public access
+            aws s3api put-bucket-policy --bucket ${BUCKET_NAME} --region ${{ env.AWS_REGION }} --policy '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::'"${BUCKET_NAME}"'/*"
+              }]
+            }'
           fi
           
-          echo "📤 Syncing to: $S3_BUCKET"
+          # Sync frontend build
+          aws s3 sync frontend/build "s3://${BUCKET_NAME}/" --delete --region ${{ env.AWS_REGION }}
           
-          aws s3 sync frontend/build s3://$S3_BUCKET/ \
-            --delete \
-            --region ${{ env.AWS_REGION }}
-          
-          echo "✅ Frontend deployed"
+          echo "✅ Frontend deployed to: http://${BUCKET_NAME}.s3-website.${{ env.AWS_REGION }}.amazonaws.com"
