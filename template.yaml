@@ -166,6 +166,28 @@ Resources:
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref CrossingsTable
+      Events:
+        DashboardAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref DashboardApi
+            Path: /dashboard
+            Method: GET
+            Auth:
+              DefaultAuthorizer: CognitoAuth
+
+  # ============================================
+  # API Gateway
+  # ============================================
+  DashboardApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt CognitoUserPool.Arn
 
 Outputs:
   CognitoUserPoolId:
@@ -185,3 +207,9 @@ Outputs:
     Value: !Ref FrontendBucket
     Export:
       Name: !Sub '${AWS::StackName}-FrontendBucket'
+
+  DashboardApiEndpoint:
+    Description: Dashboard API Endpoint
+    Value: !Sub 'https://${DashboardApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardApiEndpoint'

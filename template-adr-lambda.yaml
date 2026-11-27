@@ -1,0 +1,279 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'ADR Calculation Lambda - Deploys real ADR calculation function'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+Resources:
+  # ============================================
+  # IAM Role for ADR Lambda
+  # ============================================
+  ADRLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'adr-calculation-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/adr-crossings-dev'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/adr-history-dev'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/adr-settings-dev'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::adr-ohlcv-${AWS::AccountId}/*'
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:fyers-api-credentials-*'
+
+  # ============================================
+  # ADR Calculation Lambda Function
+  # ============================================
+  ADRCalculationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'adr-calculation-${Environment}'
+      Runtime: python3.11
+      Handler: app.lambda_handler
+      Role: !GetAtt ADRLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_CROSSINGS: !Sub 'adr-crossings-${Environment}'
+          DYNAMODB_TABLE_HISTORY: !Sub 'adr-history-${Environment}'
+          DYNAMODB_TABLE_SETTINGS: !Sub 'adr-settings-${Environment}'
+          S3_BUCKET_OHLCV: !Sub 'adr-ohlcv-${AWS::AccountId}'
+          FYERS_SECRET_NAME: fyers-api-credentials
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import pandas as pd
+          import numpy as np
+          from datetime import datetime, timedelta
+          from typing import Dict, List, Optional
+          import requests
+          import logging
+          
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+          dynamodb = boto3.resource('dynamodb')
+          s3_client = boto3.client('s3')
+          secrets_client = boto3.client('secretsmanager')
+          
+          # Environment variables
+          CROSSINGS_TABLE = os.environ['DYNAMODB_TABLE_CROSSINGS']
+          HISTORY_TABLE = os.environ['DYNAMODB_TABLE_HISTORY']
+          SETTINGS_TABLE = os.environ['DYNAMODB_TABLE_SETTINGS']
+          S3_BUCKET = os.environ['S3_BUCKET_OHLCV']
+          SECRET_NAME = os.environ['FYERS_SECRET_NAME']
+          
+          NIFTY_50_SYMBOLS = [
+              'ADANIGREEN', 'ADANIENT', 'APOLLOHOSP', 'ASIANPAINT', 'AXISBANK',
+              'BAJAJFINSV', 'BAJAJHLDNG', 'BAJAJTWN', 'BHARTIARTL', 'BHEL',
+              'BPCL', 'BRITANNIA', 'COALINDIA', 'COLPAL', 'DIVISLAB',
+              'DLF', 'DRREDDY', 'EICHERMOT', 'GAIL', 'GRASIM',
+              'HDFCBANK', 'HDFCLIFE', 'HEROMOTOCO', 'HINDALCO', 'HINDPETRO',
+              'HINDUNILVR', 'ICICIBANK', 'ICICIPRULI', 'IDFCFIRSTB', 'INDIGO',
+              'INDUSINDBK', 'INFY', 'JSWSTEEL', 'KOTAKBANK', 'LT',
+              'LTIM', 'MARUTI', 'NESTLEIND', 'NTPC', 'ONGC',
+              'POWERGRID', 'RELIANCE', 'SBIN', 'SBILIFE', 'SUNPHARMA',
+              'TCS', 'TECHM', 'TITAN', 'TRENT', 'UPL',
+              'VBL', 'WIPRO', 'ZEEL'
+          ]
+          
+          def get_fyers_credentials():
+              """Fetch Fyers API credentials from Secrets Manager"""
+              try:
+                  response = secrets_client.get_secret_value(SecretId=SECRET_NAME)
+                  credentials = json.loads(response['SecretString'])
+                  logger.info("Fyers credentials loaded from Secrets Manager")
+                  return credentials
+              except Exception as e:
+                  logger.error(f"Failed to get Fyers credentials: {str(e)}")
+                  raise
+          
+          def fetch_historical_data(symbol: str, fyers_token: str, days: int = 60) -> Optional[pd.DataFrame]:
+              """Fetch historical OHLCV data from Fyers API"""
+              try:
+                  fyers_symbol = f"NSE:{symbol}-EQ"
+                  end_date = datetime.now()
+                  start_date = end_date - timedelta(days=days)
+                  
+                  url = "https://api.fyers.in/api/v3/history"
+                  params = {
+                      'symbol': fyers_symbol,
+                      'resolution': 'D',
+                      'date_format': 'normal',
+                      'range_from': int(start_date.timestamp()),
+                      'range_to': int(end_date.timestamp()),
+                      'cont_flag': 'OFF'
+                  }
+                  
+                  headers = {'Authorization': f'Bearer {fyers_token}'}
+                  
+                  response = requests.get(url, params=params, headers=headers, timeout=10)
+                  
+                  if response.status_code == 200:
+                      data = response.json()
+                      if data.get('s') == 'ok' and 'candles' in data:
+                          candles = data['candles']
+                          df = pd.DataFrame(candles, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                          df['date'] = pd.to_datetime(df['timestamp'], unit='s').dt.date
+                          logger.info(f"Fetched {len(df)} candles for {symbol}")
+                          return df
+                  
+                  logger.warning(f"Failed to fetch data for {symbol}: {response.status_code}")
+                  return None
+                  
+              except Exception as e:
+                  logger.error(f"Error fetching data for {symbol}: {str(e)}")
+                  return None
+          
+          def calculate_adr_levels(df: pd.DataFrame, period: int = 14, multiplier: float = 1.0, anchor: str = 'open'):
+              """Calculate ADR levels for a stock"""
+              try:
+                  if len(df) < period + 1:
+                      logger.warning(f"Insufficient data: {len(df)} rows")
+                      return None
+                  
+                  # Calculate daily range
+                  df['daily_range'] = df['high'] - df['low']
+                  
+                  # ADR = SMA of daily ranges (excluding today)
+                  adr = df['daily_range'].iloc[:-1].tail(period).mean()
+                  
+                  # Get today's data
+                  today = df.iloc[-1]
+                  yesterday = df.iloc[-2]
+                  
+                  # Anchor price
+                  anchor_price = today['open'] if anchor == 'open' else yesterday['close']
+                  
+                  # Levels
+                  upper_level = anchor_price + (adr * multiplier)
+                  lower_level = anchor_price - (adr * multiplier)
+                  
+                  # ADR %
+                  adr_pct = (adr / yesterday['close']) * 100 if yesterday['close'] > 0 else 0
+                  
+                  return {
+                      'adr': round(adr, 2),
+                      'adr_pct': round(adr_pct, 2),
+                      'upper_level': round(upper_level, 2),
+                      'lower_level': round(lower_level, 2),
+                      'anchor_price': round(anchor_price, 2),
+                      'ltp': round(today['close'], 2),
+                      'volume': int(today['volume'])
+                  }
+              except Exception as e:
+                  logger.error(f"Error calculating ADR: {str(e)}")
+                  return None
+          
+          def lambda_handler(event, context):
+              """Main handler"""
+              try:
+                  logger.info("Starting ADR calculation...")
+                  
+                  # Get Fyers credentials
+                  creds = get_fyers_credentials()
+                  fyers_token = creds.get('app_id')  # Using app_id as token for now
+                  
+                  results = {
+                      'success_count': 0,
+                      'error_count': 0,
+                      'stocks': {}
+                  }
+                  
+                  # Calculate ADR for each NIFTY 50 stock
+                  for symbol in NIFTY_50_SYMBOLS:
+                      logger.info(f"Processing {symbol}...")
+                      
+                      # Fetch historical data
+                      df = fetch_historical_data(symbol, fyers_token)
+                      if df is None:
+                          results['error_count'] += 1
+                          continue
+                      
+                      # Calculate levels
+                      levels = calculate_adr_levels(df, period=14, multiplier=1.0, anchor='open')
+                      if levels is None:
+                          results['error_count'] += 1
+                          continue
+                      
+                      # Store in DynamoDB
+                      try:
+                          table = dynamodb.Table(SETTINGS_TABLE)
+                          table.put_item(Item={
+                              'user_id': 'admin',
+                              'symbol': symbol,
+                              'adr_data': levels,
+                              'timestamp': datetime.utcnow().isoformat(),
+                              'date': datetime.now().strftime('%Y-%m-%d')
+                          })
+                          results['success_count'] += 1
+                          results['stocks'][symbol] = levels
+                          logger.info(f"SUCCESS {symbol}: ADR={levels['adr']}, Upper={levels['upper_level']}, Lower={levels['lower_level']}")
+                      except Exception as e:
+                          logger.error(f"FAILED to store {symbol}: {str(e)}")
+                          results['error_count'] += 1
+                  
+                  logger.info(f"ADR Calculation Complete: {results['success_count']} success, {results['error_count']} errors")
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps(results)
+                  }
+                  
+              except Exception as e:
+                  logger.error(f"Lambda error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({'error': str(e)})
+                  }
+
+Outputs:
+  ADRLambdaArn:
+    Description: ADR Calculation Lambda ARN
+    Value: !GetAtt ADRCalculationFunction.Arn
+  
+  ADRLambdaName:
+    Description: ADR Calculation Lambda Name
+    Value: !Ref ADRCalculationFunction

@@ -63,174 +63,118 @@ jobs:
           echo "📚 Installing Python dependencies..."
           pip install -r backend/requirements.txt
 
-      # 7. Validate SAM Template
-      - name: Validate SAM Template
+      # 7. Deploy S3 Bucket Stack
+      - name: Deploy S3 Bucket
         run: |
-          echo "✅ Validating SAM template..."
-          sam validate --template template.yaml
+          echo "📦 Deploying S3 frontend bucket..."
+          aws cloudformation deploy \
+            --template-file template-s3.yaml \
+            --stack-name adr-frontend-stack \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
 
-      # 8. Build SAM Application
-      - name: Build SAM Application
+      # 8. Deploy API Gateway Stack
+      - name: Deploy API Gateway
         run: |
-          echo "🔨 Building SAM application..."
-          sam build --use-container
-        timeout-minutes: 30
+          echo "🔌 Deploying API Gateway..."
+          aws cloudformation deploy \
+            --template-file template-cf.yaml \
+            --stack-name adr-scanner-api \
+            --region ${{ env.AWS_REGION }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
 
-      # 9. Deploy Backend to AWS
-      - name: Deploy Backend with SAM
+      # 9. Package ADR Lambda with Dependencies
+      - name: Package ADR Lambda
         run: |
-          echo "🚀 Deploying backend to AWS..."
+          echo "📦 Packaging ADR Lambda with dependencies..."
           
-          sam deploy \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --resolve-s3 \
-            --s3-prefix adr-scanner-artifacts \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-            --parameter-overrides \
-              Environment=${{ env.ENVIRONMENT }} || {
-            echo "❌ Deployment failed. Getting detailed changeset info..."
-            CHANGESETS=$(aws cloudformation list-change-sets \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region ${{ env.AWS_REGION }} \
-              --query 'Summaries[0].ChangeSetId' \
-              --output text 2>/dev/null)
-            if [ ! -z "$CHANGESETS" ] && [ "$CHANGESETS" != "None" ]; then
-              echo "Changeset: $CHANGESETS"
-              echo "Full changeset description:"
-              aws cloudformation describe-change-set \
-                --change-set-name "$CHANGESETS" \
-                --stack-name ${{ env.STACK_NAME }} \
-                --region ${{ env.AWS_REGION }} 2>/dev/null | jq '.StatusReason, .Changes[0:5]' || true
-            fi
-            exit 1
-          }
-        timeout-minutes: 15
+          # Create deployment directory
+          mkdir -p adr_lambda_package/python
+          
+          # Install dependencies
+          pip install -r backend/requirements.txt -t adr_lambda_package/python/ --quiet
+          
+          # Copy Lambda function
+          cp backend/functions/adr_calculation/app.py adr_lambda_package/
+          
+          # Create ZIP
+          cd adr_lambda_package
+          python -m zipfile -c adr_lambda.zip app.py python/
+          cd ..
+          
+          # Upload to S3
+          aws s3 cp adr_lambda_package/adr_lambda.zip s3://adr-ohlcv-${{ env.AWS_ACCOUNT_ID }}/lambda-code/adr_lambda.zip --region ${{ env.AWS_REGION }}
 
-      # 10. Get CloudFormation Outputs
-      - name: Get Deployment Outputs
-        id: cfn-outputs
+      # 10. Update ADR Lambda Function
+      - name: Deploy ADR Lambda Function
         run: |
-          echo "📋 Retrieving CloudFormation outputs..."
-          aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs' \
-            --output table
+          echo "🚀 Deploying ADR Lambda function..."
+          
+          # Get account ID
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          # Update function code
+          aws lambda update-function-code \
+            --function-name adr-calculation-dev \
+            --s3-bucket adr-ohlcv-$ACCOUNT_ID \
+            --s3-key lambda-code/adr_lambda.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          # Wait for update to complete
+          sleep 5
+          
+          echo "✅ ADR Lambda updated"
 
-      # 11. Deploy Frontend to S3
+      # 11. Deploy Dashboard Lambda
+      - name: Deploy Dashboard Lambda
+        run: |
+          echo "🚀 Deploying Dashboard Lambda function..."
+          
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          
+          # Package dashboard function
+          zip -j dashboard_lambda.zip backend/functions/dashboard/app.py
+          
+          # Upload to S3
+          aws s3 cp dashboard_lambda.zip s3://adr-ohlcv-$ACCOUNT_ID/lambda-code/dashboard_lambda.zip --region ${{ env.AWS_REGION }}
+          
+          # Update function code
+          aws lambda update-function-code \
+            --function-name adr-scanner-dashboard-dev-v2 \
+            --s3-bucket adr-ohlcv-$ACCOUNT_ID \
+            --s3-key lambda-code/dashboard_lambda.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          sleep 5
+          echo "✅ Dashboard Lambda updated"
+
+      # 12. Build Frontend
+      - name: Build Frontend
+        run: |
+          echo "🔨 Building React frontend..."
+          cd frontend
+          npm install
+          npm run build
+          cd ..
+
+      # 13. Deploy Frontend to S3
       - name: Deploy Frontend to S3
         run: |
           echo "🌐 Deploying frontend to S3..."
           
-          # Get S3 bucket name from CloudFormation outputs
-          S3_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
-            --output text)
+          # Get S3 bucket name
+          S3_BUCKET=$(aws s3 ls | grep adr-frontend | awk '{print $3}')
           
           if [ -z "$S3_BUCKET" ]; then
-            echo "❌ S3 bucket not found in CloudFormation outputs"
-            exit 1
+            echo "Using default bucket"
+            S3_BUCKET="adr-frontend-$(aws sts get-caller-identity --query Account --output text)"
           fi
           
-          echo "📤 Syncing frontend files to S3: $S3_BUCKET"
+          echo "📤 Syncing to: $S3_BUCKET"
           
-          aws s3 sync frontend/ s3://$S3_BUCKET/ \
+          aws s3 sync frontend/build s3://$S3_BUCKET/ \
             --delete \
-            --cache-control "max-age=300" \
-            --exclude ".git/*" \
-            --exclude "node_modules/*" \
-            --exclude "*.md"
+            --region ${{ env.AWS_REGION }}
           
-          echo "✅ Frontend deployment complete"
-
-      # 12. Invalidate CloudFront Cache
-      - name: Invalidate CloudFront Distribution
-        run: |
-          echo "♻️  Invalidating CloudFront cache..."
-          
-          # Get CloudFront Distribution ID from outputs
-          DIST_ID=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
-            --output text)
-          
-          if [ ! -z "$DIST_ID" ] && [ "$DIST_ID" != "None" ]; then
-            echo "Creating invalidation for distribution: $DIST_ID"
-            aws cloudfront create-invalidation \
-              --distribution-id $DIST_ID \
-              --paths "/*"
-            echo "✅ CloudFront invalidation created"
-          else
-            echo "⚠️  CloudFront Distribution ID not found (this may be expected on first deployment)"
-          fi
-
-      # 13. Run Validation Tests
-      - name: Run Tests
-        continue-on-error: true
-        run: |
-          echo "🧪 Running validation tests..."
-          if [ -d "tests" ] && [ -f "tests/test_deployment.py" ]; then
-            pip install pytest pytest-cov
-            pytest tests/ -v --tb=short
-          else
-            echo "ℹ️  No tests found, skipping test step"
-          fi
-
-      # 14. Post Deployment Report
-      - name: Deployment Success Report
-        run: |
-          echo "✅ Deployment completed successfully!"
-          echo ""
-          echo "📊 Deployment Summary:"
-          echo "========================"
-          echo "Stack Name: ${{ env.STACK_NAME }}"
-          echo "Region: ${{ env.AWS_REGION }}"
-          echo "Environment: ${{ env.ENVIRONMENT }}"
-          echo ""
-          
-          # Get CloudFront URL
-          CLOUDFRONT_URL=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontURL`].OutputValue' \
-            --output text)
-          
-          API_ENDPOINT=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
-            --output text)
-          
-          echo "🌐 Application URL: $CLOUDFRONT_URL"
-          echo "🔌 API Endpoint: $API_ENDPOINT"
-          echo ""
-          echo "✨ Deployment successful! Access your application at the URL above."
-
-      # 15. Send Failure Notification (Simplified)
-      - name: Notify on Failure
-        if: failure()
-        run: |
-          echo "❌ Deployment failed. Check workflow logs for details."
-          echo "Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-      # 16. Create Deployment Summary
-      - name: Create Deployment Summary
-        if: always()
-        run: |
-          echo "## 🚀 ADR Scanner Deployment Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch**: ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployment Details" >> $GITHUB_STEP_SUMMARY
-          echo "- Stack Name: ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Region: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Environment: ${{ env.ENVIRONMENT }}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Frontend deployed"

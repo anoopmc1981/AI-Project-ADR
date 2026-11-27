@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { authService } from '../services/authService';
+import { signOut } from 'aws-amplify/auth';
 import '../styles/Login.css';
 
 export function Login({ onLoginSuccess }) {
@@ -12,15 +13,37 @@ export function Login({ onLoginSuccess }) {
   const [confirmCode, setConfirmCode] = useState('');
   const [showConfirmation, setShowConfirmation] = useState(false);
 
+  // Clear any existing session on component mount
+  useEffect(() => {
+    const clearSession = async () => {
+      try {
+        await signOut();
+      } catch (err) {
+        // Silent fail - no session to clear
+      }
+    };
+    clearSession();
+  }, []);
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
+      // Clear any existing session first
+      try {
+        await signOut();
+      } catch (err) {
+        // Silent fail
+      }
+
       const result = await authService.login(email, password);
       if (result) {
-        onLoginSuccess(result);
+        // Add small delay to ensure state updates
+        setTimeout(() => {
+          onLoginSuccess(result);
+        }, 500);
       }
     } catch (err) {
       console.error('Login error:', err);

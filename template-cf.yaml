@@ -1,0 +1,204 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'ADR Scanner API Gateway - Standalone'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+  CrossingsTableName:
+    Type: String
+    Default: adr-crossings-dev
+  HistoryTableName:
+    Type: String
+    Default: adr-history-dev
+  SettingsTableName:
+    Type: String
+    Default: adr-settings-dev
+
+Resources:
+  # ============================================
+  # IAM Role for Lambda
+  # ============================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'adr-lambda-role-${Environment}-v2'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:PutItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${CrossingsTableName}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${HistoryTableName}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${SettingsTableName}'
+
+  # ============================================
+  # Lambda Functions
+  # ============================================
+  DashboardFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'adr-scanner-dashboard-${Environment}-v2'
+      Runtime: python3.11
+      Handler: app.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_CROSSINGS: !Ref CrossingsTableName
+          DYNAMODB_TABLE_HISTORY: !Ref HistoryTableName
+          DYNAMODB_TABLE_LEVELS: !Ref SettingsTableName
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from datetime import datetime
+          
+          dynamodb = boto3.resource('dynamodb')
+          
+          def lambda_handler(event, context):
+              try:
+                  # For now, return mock data with CORS headers
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                          'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+                      },
+                      'body': json.dumps({
+                          'type': 'crossings',
+                          'summary': {
+                              'upper_count': 5,
+                              'lower_count': 3,
+                              'total_count': 8,
+                              'last_update': datetime.utcnow().isoformat()
+                          },
+                          'upper_crossings': [
+                              {
+                                  'symbol': 'TCS',
+                                  'ltp': 3250.50,
+                                  'adr_pct': 2.5,
+                                  'level': 3200.00,
+                                  'crossing_time': datetime.utcnow().isoformat()
+                              }
+                          ],
+                          'lower_crossings': [],
+                          'timestamp': datetime.utcnow().isoformat()
+                      })
+                  }
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': str(e)})
+                  }
+
+  # ============================================
+  # API Gateway
+  # ============================================
+  DashboardApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub 'adr-dashboard-api-${Environment}-v2'
+      Description: ADR Scanner Dashboard API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  DashboardResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref DashboardApi
+      ParentId: !GetAtt DashboardApi.RootResourceId
+      PathPart: dashboard
+
+  # OPTIONS method for CORS preflight
+  DashboardOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DashboardApi
+      ResourceId: !Ref DashboardResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: ''
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # GET method
+  DashboardMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref DashboardApi
+      ResourceId: !Ref DashboardResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DashboardFunction.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+
+  DashboardApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${DashboardApi}/*/*'
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - DashboardMethod
+      - DashboardOptionsMethod
+    Properties:
+      RestApiId: !Ref DashboardApi
+      StageName: !Ref Environment
+
+Outputs:
+  DashboardApiEndpoint:
+    Description: Dashboard API Endpoint
+    Value: !Sub 'https://${DashboardApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${AWS::StackName}-DashboardApiEndpoint'

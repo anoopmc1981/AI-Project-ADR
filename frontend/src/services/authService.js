@@ -1,178 +1,206 @@
-import { CognitoUserPool, CognitoUser, AuthenticationDetails } from 'amazon-cognito-identity-js';
+import { Amplify } from 'aws-amplify';
+import { signUp, confirmSignUp, signIn, signOut, getCurrentUser, fetchAuthSession } from 'aws-amplify/auth';
 import { cognito } from '../config/cognito';
 
-const poolData = {
-  UserPoolId: cognito.userPoolId,
-  ClientId: cognito.clientId,
-};
+// Configure Amplify
+Amplify.configure({
+  Auth: {
+    Cognito: {
+      region: cognito.region,
+      userPoolId: cognito.userPoolId,
+      userPoolClientId: cognito.clientId,
+    },
+  },
+});
 
-const userPool = new CognitoUserPool(poolData);
+// Custom token storage in localStorage
+const tokenStorage = {
+  setTokens: (tokens) => {
+    console.log('Storing tokens in localStorage');
+    localStorage.setItem('auth_tokens', JSON.stringify({
+      accessToken: tokens.accessToken,
+      idToken: tokens.idToken,
+      refreshToken: tokens.refreshToken,
+      username: tokens.username,
+      timestamp: Date.now(),
+    }));
+  },
+
+  getTokens: () => {
+    const stored = localStorage.getItem('auth_tokens');
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch (e) {
+        console.error('Error parsing stored tokens:', e);
+        return null;
+      }
+    }
+    return null;
+  },
+
+  clearTokens: () => {
+    console.log('Clearing tokens from localStorage');
+    localStorage.removeItem('auth_tokens');
+  },
+};
 
 export const authService = {
   // Sign up new user
   signUp: (email, password, name) => {
-    return new Promise((resolve, reject) => {
-      const attributeList = [
-        {
-          Name: 'email',
-          Value: email,
+    console.log('signUp called:', { email, name });
+    return signUp({
+      username: email,
+      password: password,
+      options: {
+        userAttributes: {
+          email: email,
+          name: name,
         },
-        {
-          Name: 'name',
-          Value: name,
-        },
-      ];
-
-      userPool.signUp(email, password, attributeList, null, (err, result) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      });
+      },
+    }).catch((err) => {
+      console.error('signUp error:', err);
+      throw err;
     });
   },
 
   // Confirm sign up with code
   confirmSignUp: (email, code) => {
-    return new Promise((resolve, reject) => {
-      const cognitoUser = new CognitoUser({
-        Username: email,
-        Pool: userPool,
-      });
-
-      cognitoUser.confirmRegistration(code, true, (err, result) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(result);
-        }
-      });
+    console.log('confirmSignUp called:', { email });
+    return confirmSignUp({
+      username: email,
+      confirmationCode: code,
+    }).catch((err) => {
+      console.error('confirmSignUp error:', err);
+      throw err;
     });
   },
 
-  // Log in user - FIXED VERSION
+  // Log in user
   login: (email, password) => {
-    return new Promise((resolve, reject) => {
-      try {
-        const cognitoUser = new CognitoUser({
-          Username: email,
-          Pool: userPool,
-        });
-
-        const authenticationDetails = new AuthenticationDetails({
-          Username: email,
-          Password: password,
-        });
-
-        cognitoUser.authenticateUser(authenticationDetails, {
-          onSuccess: (result) => {
-            try {
-              const tokens = {
-                accessToken: result.getAccessToken().getJwtToken(),
-                idToken: result.getIdToken().getJwtToken(),
-                user: email,
-              };
-              
-              // Try to get refresh token if available
-              try {
-                tokens.refreshToken = result.getRefreshToken().getToken();
-              } catch (e) {
-                // Refresh token might not be available
-              }
-              
-              resolve(tokens);
-            } catch (e) {
-              resolve({
-                user: email,
-                authenticated: true,
-              });
-            }
-          },
-          onFailure: (err) => {
-            console.error('Auth error:', err);
-            reject(new Error(err.message || 'Login failed'));
-          },
-        });
-      } catch (err) {
-        console.error('Login error:', err);
-        reject(new Error(err.message || 'Login error'));
-      }
-    });
+    console.log('login called:', { email });
+    return signIn({
+      username: email,
+      password: password,
+    })
+      .then(async (user) => {
+        console.log('signIn successful:', user);
+        
+        // Get the session tokens
+        try {
+          const session = await fetchAuthSession();
+          console.log('Got session:', session);
+          
+          const tokens = {
+            accessToken: session.tokens?.accessToken?.toString() || '',
+            idToken: session.tokens?.idToken?.toString() || '',
+            refreshToken: session.tokens?.refreshToken?.toString() || session.tokens?.refreshToken || '',
+            username: user.username,
+          };
+          
+          console.log('Processed tokens:', {
+            hasAccessToken: !!tokens.accessToken,
+            hasIdToken: !!tokens.idToken,
+            hasRefreshToken: !!tokens.refreshToken,
+            username: tokens.username,
+          });
+          
+          // Store tokens in localStorage
+          tokenStorage.setTokens(tokens);
+          
+          return {
+            user: user.username,
+            authenticated: true,
+            ...tokens,
+          };
+        } catch (err) {
+          console.error('Error getting session:', err);
+          throw err;
+        }
+      })
+      .catch((err) => {
+        console.error('signIn error:', err);
+        throw err;
+      });
   },
 
   // Log out user
   logout: () => {
-    const cognitoUser = userPool.getCurrentUser();
-    if (cognitoUser) {
-      cognitoUser.signOut();
-    }
+    console.log('logout called');
+    tokenStorage.clearTokens();
+    return signOut().catch((err) => {
+      console.error('logout error:', err);
+      tokenStorage.clearTokens();
+      throw err;
+    });
   },
 
   // Get current user
   getCurrentUser: () => {
-    return userPool.getCurrentUser();
+    console.log('getCurrentUser called');
+    return getCurrentUser().catch((err) => {
+      console.error('getCurrentUser error:', err);
+      throw err;
+    });
   },
 
   // Get current user session
   getUserSession: () => {
-    return new Promise((resolve, reject) => {
-      const cognitoUser = userPool.getCurrentUser();
-
-      if (!cognitoUser) {
-        reject(new Error('No user found'));
-        return;
-      }
-
-      cognitoUser.getSession((err, session) => {
-        if (err) {
-          reject(err);
-        } else if (!session.isValid()) {
-          reject(new Error('Session is not valid'));
-        } else {
-          resolve(session);
-        }
-      });
+    return fetchAuthSession().catch((err) => {
+      console.error('fetchAuthSession error:', err);
+      throw err;
     });
   },
 
   // Check if user is authenticated
   isAuthenticated: async () => {
     try {
-      await authService.getUserSession();
+      console.log('Checking authentication...');
+      
+      // First check localStorage for stored tokens
+      const stored = tokenStorage.getTokens();
+      if (stored) {
+        console.log('Found stored tokens for user:', stored.username);
+        return true;
+      }
+      
+      // Then check with Amplify
+      await getCurrentUser();
+      console.log('User authenticated via Amplify');
       return true;
-    } catch {
+    } catch (err) {
+      console.log('Not authenticated:', err.message);
       return false;
     }
   },
 
+  // Get stored user info
+  getStoredUser: () => {
+    const tokens = tokenStorage.getTokens();
+    if (tokens) {
+      return {
+        username: tokens.username,
+        email: tokens.username,
+      };
+    }
+    return null;
+  },
+
   // Refresh tokens
-  refreshTokens: () => {
-    return new Promise((resolve, reject) => {
-      const cognitoUser = userPool.getCurrentUser();
-
-      if (!cognitoUser) {
-        reject(new Error('No user found'));
-        return;
-      }
-
-      cognitoUser.getSession((err, session) => {
-        if (err) {
-          reject(err);
-        } else {
-          const refreshToken = session.getRefreshToken();
-          cognitoUser.refreshSession(refreshToken, (err, session) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve({
-                accessToken: session.getAccessToken().getJwtToken(),
-                idToken: session.getIdToken().getJwtToken(),
-              });
-            }
-          });
-        }
-      });
-    });
+  refreshTokens: async () => {
+    try {
+      const session = await fetchAuthSession({ forceRefresh: true });
+      const tokens = {
+        accessToken: session.tokens?.accessToken?.toString() || '',
+        idToken: session.tokens?.idToken?.toString() || '',
+        refreshToken: session.tokens?.refreshToken?.toString() || session.tokens?.refreshToken || '',
+      };
+      tokenStorage.setTokens(tokens);
+      return tokens;
+    } catch (err) {
+      console.error('refreshTokens error:', err);
+      throw err;
+    }
   },
 };
+
